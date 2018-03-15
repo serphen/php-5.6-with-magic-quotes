@@ -1,0 +1,221 @@
+implementedimplementeddiff '--exclude=debian' -u -r php-5.6.34/ext/filter/filter.c php-5.6.34-with-magic-quotes/ext/filter/filter.c
+--- php-5.6.34/ext/filter/filter.c	2018-02-27 23:15:25.000000000 +0000
++++ php-5.6.34-with-magic-quotes/ext/filter/filter.c	2018-03-15 13:21:41.833200726 +0000
+@@ -473,6 +473,8 @@
+ 			Z_STRVAL(new_var) = estrndup(*val, val_len);
+ 			INIT_PZVAL(tmp_new_var);
+ 			php_zval_filter(&tmp_new_var, IF_G(default_filter), IF_G(default_filter_flags), NULL, NULL/*charset*/, 0 TSRMLS_CC);
++		} else if (PG(magic_quotes_gpc) && !retval) { /* for PARSE_STRING php_register_variable_safe() will do the addslashes() */
++			Z_STRVAL(new_var) = php_addslashes(*val, Z_STRLEN(new_var), &Z_STRLEN(new_var), 0 TSRMLS_CC);
+ 		} else {
+ 			Z_STRVAL(new_var) = estrndup(*val, val_len);
+ 		}
+diff '--exclude=debian' -u -r php-5.6.34/ext/standard/basic_functions.c php-5.6.34-with-magic-quotes/ext/standard/basic_functions.c
+--- php-5.6.34/ext/standard/basic_functions.c	2018-02-27 23:15:25.000000000 +0000
++++ php-5.6.34-with-magic-quotes/ext/standard/basic_functions.c	2018-03-15 10:15:42.681369703 +0000
+@@ -4635,10 +4635,7 @@
+    Get the current active configuration setting of magic_quotes_gpc */
+ PHP_FUNCTION(get_magic_quotes_gpc)
+ {
+-	if (zend_parse_parameters_none() == FAILURE) {
+-		return;
+-	}
+-	RETURN_FALSE;
++	RETURN_LONG(PG(magic_quotes_gpc));
+ }
+ /* }}} */
+ 
+diff '--exclude=debian' -u -r php-5.6.34/main/main.c php-5.6.34-with-magic-quotes/main/main.c
+--- php-5.6.34/main/main.c	2018-02-27 23:15:25.000000000 +0000
++++ php-5.6.34-with-magic-quotes/main/main.c	2018-03-15 10:15:43.161366772 +0000
+@@ -573,6 +573,7 @@
+ 	STD_PHP_INI_BOOLEAN("ignore_repeated_source",	"0",	PHP_INI_ALL,		OnUpdateBool,			ignore_repeated_source,	php_core_globals,	core_globals)
+ 	STD_PHP_INI_BOOLEAN("report_memleaks",		"1",		PHP_INI_ALL,		OnUpdateBool,			report_memleaks,		php_core_globals,	core_globals)
+ 	STD_PHP_INI_BOOLEAN("report_zend_debug",	"1",		PHP_INI_ALL,		OnUpdateBool,			report_zend_debug,		php_core_globals,	core_globals)
++	STD_PHP_INI_BOOLEAN("magic_quotes_gpc",		"1",		PHP_INI_PERDIR|PHP_INI_SYSTEM,	OnUpdateBool,	magic_quotes_gpc,		php_core_globals,	core_globals)
+ 	STD_PHP_INI_ENTRY("output_buffering",		"0",		PHP_INI_PERDIR|PHP_INI_SYSTEM,	OnUpdateLong,	output_buffering,		php_core_globals,	core_globals)
+ 	STD_PHP_INI_ENTRY("output_handler",			NULL,		PHP_INI_PERDIR|PHP_INI_SYSTEM,	OnUpdateString,	output_handler,		php_core_globals,	core_globals)
+ 	STD_PHP_INI_BOOLEAN("register_argc_argv",	"1",		PHP_INI_PERDIR|PHP_INI_SYSTEM,	OnUpdateBool,	register_argc_argv,		php_core_globals,	core_globals)
+@@ -2365,7 +2366,7 @@
+ 		struct {
+ 			const long error_level;
+ 			const char *phrase;
+-			const char *directives[16]; /* Remember to change this if the number of directives change */
++			const char *directives[15]; /* Remember to change this if the number of directives change */
+ 		} directives[2] = {
+ 			{
+ 				E_DEPRECATED,
+@@ -2381,7 +2382,6 @@
+ 					"allow_call_time_pass_reference",
+ 					"define_syslog_variables",
+ 					"highlight.bg",
+-					"magic_quotes_gpc",
+ 					"magic_quotes_runtime",
+ 					"magic_quotes_sybase",
+ 					"register_globals",
+diff '--exclude=debian' -u -r php-5.6.34/main/php_globals.h php-5.6.34-with-magic-quotes/main/php_globals.h
+--- php-5.6.34/main/php_globals.h	2018-02-27 23:15:25.000000000 +0000
++++ php-5.6.34-with-magic-quotes/main/php_globals.h	2018-03-15 10:15:43.157366798 +0000
+@@ -54,6 +54,8 @@
+ } arg_separators;
+ 
+ struct _php_core_globals {
++	zend_bool magic_quotes_gpc;
++
+ 	zend_bool implicit_flush;
+ 
+ 	long output_buffering;
+diff '--exclude=debian' -u -r php-5.6.34/main/php_variables.c php-5.6.34-with-magic-quotes/main/php_variables.c
+--- php-5.6.34/main/php_variables.c	2018-02-27 23:15:25.000000000 +0000
++++ php-5.6.34-with-magic-quotes/main/php_variables.c	2018-03-15 11:20:01.940492853 +0000
+@@ -50,7 +50,11 @@
+ 
+ 	/* Prepare value */
+ 	Z_STRLEN(new_entry) = str_len;
+-	Z_STRVAL(new_entry) = estrndup(strval, Z_STRLEN(new_entry));
++	if (PG(magic_quotes_gpc)) {
++		Z_STRVAL(new_entry) = php_addslashes(strval, Z_STRLEN(new_entry), &Z_STRLEN(new_entry), 0 TSRMLS_CC);
++	} else {
++		Z_STRVAL(new_entry) = estrndup(strval, Z_STRLEN(new_entry));
++	}
+ 	Z_TYPE(new_entry) = IS_STRING;
+ 
+ 	php_register_variable_ex(var, &new_entry, track_vars_array TSRMLS_CC);
+@@ -60,7 +64,7 @@
+ {
+ 	char *p = NULL;
+ 	char *ip = NULL;		/* index pointer */
+-	char *index;
++	char *index, *escaped_index = NULL;
+ 	char *var, *var_orig;
+ 	int var_len, index_len;
+ 	zval *gpc_element, **gpc_element_p;
+@@ -184,11 +188,19 @@
+ 					return;
+ 				}
+ 			} else {
+-				if (zend_symtable_find(symtable1, index, index_len + 1, (void **) &gpc_element_p) == FAILURE
++				if (PG(magic_quotes_gpc)) {
++					escaped_index = php_addslashes(index, index_len, &index_len, 0 TSRMLS_CC);
++				} else {
++					escaped_index = index;
++				}
++				if (zend_symtable_find(symtable1, escaped_index, index_len + 1, (void **) &gpc_element_p) == FAILURE
+ 					|| Z_TYPE_PP(gpc_element_p) != IS_ARRAY) {
+ 					MAKE_STD_ZVAL(gpc_element);
+ 					array_init(gpc_element);
+-					zend_symtable_update(symtable1, index, index_len + 1, &gpc_element, sizeof(zval *), (void **) &gpc_element_p);
++					zend_symtable_update(symtable1, escaped_index, index_len + 1, &gpc_element, sizeof(zval *), (void **) &gpc_element_p);
++				}
++				if (index != escaped_index) {
++					efree(escaped_index);
+ 				}
+ 			}
+ 			symtable1 = Z_ARRVAL_PP(gpc_element_p);
+@@ -214,6 +226,11 @@
+ 				zval_ptr_dtor(&gpc_element);
+ 			}
+ 		} else {
++			if (PG(magic_quotes_gpc)) {
++				escaped_index = php_addslashes(index, index_len, &index_len, 0 TSRMLS_CC);
++			} else {
++				escaped_index = index;
++			}
+ 			/*
+ 			 * According to rfc2965, more specific paths are listed above the less specific ones.
+ 			 * If we encounter a duplicate cookie name, we should skip it, since it is not possible
+@@ -222,10 +239,13 @@
+ 			 */
+ 			if (PG(http_globals)[TRACK_VARS_COOKIE] &&
+ 				symtable1 == Z_ARRVAL_P(PG(http_globals)[TRACK_VARS_COOKIE]) &&
+-				zend_symtable_exists(symtable1, index, index_len + 1)) {
++				zend_symtable_exists(symtable1, escaped_index, index_len + 1)) {
+ 				zval_ptr_dtor(&gpc_element);
+ 			} else {
+-				zend_symtable_update(symtable1, index, index_len + 1, &gpc_element, sizeof(zval *), (void **) &gpc_element_p);
++				zend_symtable_update(symtable1, escaped_index, index_len + 1, &gpc_element, sizeof(zval *), (void **) &gpc_element_p);
++			}
++			if (escaped_index != index) {
++				efree(escaped_index);
+ 			}
+ 		}
+ 	}
+@@ -511,6 +531,10 @@
+ 	size_t alloc_size = sizeof(buf);
+ 	unsigned long nlen; /* ptrdiff_t is not portable */
+ 
++	/* turn off magic_quotes while importing environment variables */
++	int magic_quotes_gpc = PG(magic_quotes_gpc);
++	PG(magic_quotes_gpc) = 0;
++
+ 	for (env = environ; env != NULL && *env != NULL; env++) {
+ 		p = strchr(*env, '=');
+ 		if (!p) {				/* malformed entry? */
+@@ -528,6 +552,7 @@
+ 	if (t != buf && t != NULL) {
+ 		efree(t);
+ 	}
++	PG(magic_quotes_gpc) = magic_quotes_gpc;
+ }
+ 
+ zend_bool php_std_auto_global_callback(char *name, uint name_len TSRMLS_DC)
+@@ -626,6 +651,9 @@
+ {
+ 	zval *array_ptr = NULL;
+ 
++	/* turn off magic_quotes while importing server variables */
++	int magic_quotes_gpc = PG(magic_quotes_gpc);
++
+ 	ALLOC_ZVAL(array_ptr);
+ 	array_init(array_ptr);
+ 	INIT_PZVAL(array_ptr);
+@@ -634,6 +662,8 @@
+ 	}
+ 	PG(http_globals)[TRACK_VARS_SERVER] = array_ptr;
+ 
++	PG(magic_quotes_gpc) = 0;
++
+ 	/* Server variables */
+ 	if (sapi_module.register_server_variables) {
+ 		sapi_module.register_server_variables(array_ptr TSRMLS_CC);
+@@ -660,6 +690,8 @@
+ 		php_register_variable_ex("REQUEST_TIME", &request_time_long, array_ptr TSRMLS_CC);
+ 	}
+ 
++	PG(magic_quotes_gpc) = magic_quotes_gpc;
++
+ }
+ /* }}} */
+ 
+diff '--exclude=debian' -u -r php-5.6.34/sapi/fpm/fpm/fpm_main.c php-5.6.34-with-magic-quotes/sapi/fpm/fpm/fpm_main.c
+--- php-5.6.34/sapi/fpm/fpm/fpm_main.c	2018-02-27 23:15:25.000000000 +0000
++++ php-5.6.34-with-magic-quotes/sapi/fpm/fpm/fpm_main.c	2018-03-15 10:15:43.221366406 +0000
+@@ -570,6 +570,7 @@
+ {
+ 	fcgi_request *request;
+ 	HashPosition pos;
++	int magic_quotes_gpc;;
+ 	char *var, **val;
+ 	uint var_len;
+ 	ulong idx;
+@@ -602,8 +603,11 @@
+ 	php_php_import_environment_variables(array_ptr TSRMLS_CC);
+ 
+ 	request = (fcgi_request*) SG(server_context);
++	magic_quotes_gpc = PG(magic_quotes_gpc);
+ 	filter_arg = (array_ptr == PG(http_globals)[TRACK_VARS_ENV])?PARSE_ENV:PARSE_SERVER;
+ 
++	PG(magic_quotes_gpc) = 0;
++
+ 	for (zend_hash_internal_pointer_reset_ex(request->env, &pos);
+ 	     zend_hash_get_current_key_ex(request->env, &var, &var_len, &idx, 0, &pos) == HASH_KEY_IS_STRING &&
+ 	     zend_hash_get_current_data_ex(request->env, (void **) &val, &pos) == SUCCESS;
+@@ -615,6 +619,8 @@
+ 			php_register_variable_safe(var, *val, new_val_len, array_ptr TSRMLS_CC);
+ 		}
+ 	}
++
++	PG(magic_quotes_gpc) = magic_quotes_gpc;
+ }
+ 
+ static void sapi_cgi_register_variables(zval *track_vars_array TSRMLS_DC)
